@@ -26,6 +26,7 @@ openapi_tags = [
     {"name": "journal", "description": "Reflection journal endpoints."},
 ]
 
+
 app = FastAPI(
     title="Skill Story LMS API",
     description="Backend API for interactive stories, XP tracking, and journaling.",
@@ -41,6 +42,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*", "Authorization"],
 )
+
 
 # Basic rate limiting stub (no-op, placeholder for future)
 @app.middleware("http")
@@ -114,8 +116,6 @@ app.include_router(journal.router, prefix="/api")
 
 
 # PUBLIC_INTERFACE
-
-
 @app.get(
     "/docs/websocket-help",
     tags=["health"],

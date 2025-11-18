@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field, EmailStr
 from sqlmodel import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 
 from ..modules.db import get_session, User
 from ..modules.auth_utils import hash_password, verify_password, issue_token_pair, decode_token
@@ -99,7 +99,14 @@ async def register(payload: RegisterRequest):
                 xp=0,
             )
             session.add(user)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                # Handle race: another request inserted same email/username meanwhile
+                raise HTTPException(status_code=409, detail="Email already registered")
+    except HTTPException:
+        # Bubble up HTTPException as-is
+        raise
     except SQLAlchemyError as e:
         # Convert DB errors to a clearer 503 for operators (e.g., migrations missing or DB down)
         raise HTTPException(status_code=503, detail=f"Database unavailable or schema error: {str(e)}")
@@ -140,6 +147,8 @@ async def login(payload: LoginRequest):
                 raise HTTPException(status_code=401, detail="Invalid credentials")
             if getattr(user, "is_active", True) is False:
                 raise HTTPException(status_code=403, detail="User inactive")
+    except HTTPException:
+        raise
     except SQLAlchemyError as e:
         raise HTTPException(status_code=503, detail=f"Database unavailable or schema error: {str(e)}")
     except Exception:
