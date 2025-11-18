@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from sqlmodel import SQLModel, Field, Relationship, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -23,7 +23,7 @@ class User(SQLModel, table=True):
 class Story(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     title: str
-    description: str
+    description: str  # include simple tags inline in description (e.g., [communication])
 
     episodes: List["Episode"] = Relationship(back_populates="story")
 
@@ -61,7 +61,12 @@ AsyncSessionLocal = None
 
 
 async def init_db():
-    """Initialize database engine, create tables, and seed demo data."""
+    """Initialize database engine, create tables, and seed demo data.
+
+    This function is idempotent: it checks for existing records by unique fields
+    (e.g., usernames and story titles) before inserting. Running multiple times
+    will not duplicate data.
+    """
     global engine, AsyncSessionLocal
     if engine is None:
         engine = create_async_engine(settings.db_url(), echo=False, future=True)
@@ -70,63 +75,37 @@ async def init_db():
         )
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+
     # Seed demo data idempotently
     async with get_session() as session:
-        # Ensure demo user
         demo_username = "demo_user"
+
+        # Ensure demo user exists
         res = await session.exec(select(User).where(User.username == demo_username))
         user = res.first()
         if not user:
             user = User(username=demo_username, display_name="Demo User", xp=0)
             session.add(user)
             await session.commit()
-        # Seed story if not exists
-        res = await session.exec(select(Story).where(Story.title == "Leadership Basics"))
-        story = res.first()
-        if not story:
-            story = Story(
-                title="Leadership Basics",
-                description="A short scenario to practice leadership decision-making.",
-            )
-            session.add(story)
-            await session.commit()
-            await session.refresh(story)
+            await session.refresh(user)
 
-            # Episodes
-            ep0 = Episode(story_id=story.id, index=0, content="You are leading a new project kickoff. How do you start?")
-            ep1 = Episode(story_id=story.id, index=1, content="You choose to listen first. The team shares concerns.")
-            ep2 = Episode(story_id=story.id, index=2, content="You choose to assert a plan. The team seems hesitant.")
-            session.add_all([ep0, ep1, ep2])
-            await session.commit()
-            await session.refresh(ep0)
-            await session.refresh(ep1)
-            await session.refresh(ep2)
+        # Seed the bundled stories
+        await _seed_stories(session)
 
-            # Choices for ep0
-            c0 = Choice(episode_id=ep0.id, text="Listen to the team's input", next_episode_index=1, xp_delta=10)
-            c1 = Choice(episode_id=ep0.id, text="Present a detailed plan immediately", next_episode_index=2, xp_delta=5)
-            session.add_all([c0, c1])
-
-            # Choices for ep1 (end)
-            c2 = Choice(episode_id=ep1.id, text="Acknowledge concerns and co-create next steps", next_episode_index=None, xp_delta=15)
-            session.add(c2)
-
-            # Choices for ep2 (end)
-            c3 = Choice(episode_id=ep2.id, text="Invite feedback to adjust the plan", next_episode_index=None, xp_delta=10)
-            session.add(c3)
-
-            await session.commit()
-
-        # Ensure demo_user has initial progress
+        # Ensure demo_user has initial progress (only if not already set)
         res = await session.exec(select(User).where(User.username == demo_username))
         demo_user = res.first()
         if demo_user and demo_user.current_story_id is None:
-            # start at first episode of the story
+            # Start at first story (Leadership Basics) first episode if available
             res_s = await session.exec(select(Story).where(Story.title == "Leadership Basics"))
             story_obj = res_s.first()
-            demo_user.current_story_id = story_obj.id
-            demo_user.current_episode_index = 0
-            await session.commit()
+            if story_obj:
+                demo_user.current_story_id = story_obj.id
+                demo_user.current_episode_index = 0
+                await session.commit()
+
+        # Optionally seed a couple of journal entries for demo_user if none exist
+        await _seed_demo_journals(session, user_id=user.id)
 
 
 async def close_db():
@@ -156,3 +135,224 @@ class SessionContext:
 def get_session():
     """Helper to get an async session context manager."""
     return SessionContext()
+
+
+async def _seed_stories(session: AsyncSession):
+    """Create multiple sample stories with episodes and choices, idempotently.
+
+    We keep tags simple by embedding them in descriptions (e.g., Tags: communication).
+    Each episode has 2-3 choices affecting XP and progression.
+    """
+
+    # Define stories data model for seeding
+    stories_payload: List[Dict[str, Any]] = [
+        {
+            "title": "Leadership Basics",
+            "description": "A short scenario to practice leadership decision-making. Tags: leadership",
+            "episodes": [
+                {
+                    "content": "You are leading a new project kickoff. How do you start?",
+                    "choices": [
+                        {"text": "Listen to the team's input", "next": 1, "xp": 10},
+                        {"text": "Present a detailed plan immediately", "next": 2, "xp": 5},
+                    ],
+                },
+                {
+                    "content": "You choose to listen first. The team shares concerns.",
+                    "choices": [
+                        {"text": "Acknowledge concerns and co-create next steps", "next": None, "xp": 15}
+                    ],
+                },
+                {
+                    "content": "You choose to assert a plan. The team seems hesitant.",
+                    "choices": [
+                        {"text": "Invite feedback to adjust the plan", "next": None, "xp": 10}
+                    ],
+                },
+            ],
+        },
+        {
+            "title": "Effective Communication",
+            "description": "Navigate a tough stakeholder update meeting. Tags: communication",
+            "episodes": [
+                {
+                    "content": "The product launch is delayed. How do you open the stakeholder meeting?",
+                    "choices": [
+                        {"text": "Start with transparency about risks and status", "next": 1, "xp": 10},
+                        {"text": "Highlight positives and defer the delay conversation", "next": 2, "xp": 5},
+                        {"text": "Ask stakeholders for their priorities before sharing status", "next": 1, "xp": 8},
+                    ],
+                },
+                {
+                    "content": "Stakeholders appreciate the clarity. They ask for impact and next steps.",
+                    "choices": [
+                        {"text": "Share a concise impact summary and a mitigation plan", "next": 3, "xp": 15},
+                        {"text": "Promise to follow up later via email", "next": 3, "xp": 5},
+                    ],
+                },
+                {
+                    "content": "Stakeholders look surprised when the delay surfaces later.",
+                    "choices": [
+                        {"text": "Apologize for the approach and reset with clear facts", "next": 3, "xp": 10},
+                        {"text": "Continue focusing on positives only", "next": None, "xp": 2},
+                    ],
+                },
+                {
+                    "content": "Meeting wrap-up: stakeholders want a weekly update cadence.",
+                    "choices": [
+                        {"text": "Confirm a brief weekly status format", "next": None, "xp": 12},
+                        {"text": "Suggest ad-hoc updates only", "next": None, "xp": 3},
+                    ],
+                },
+            ],
+        },
+        {
+            "title": "Emotional Intelligence at Work",
+            "description": "Handle a teammate's frustration during a sprint. Tags: emotional-intelligence",
+            "episodes": [
+                {
+                    "content": "A teammate is visibly frustrated after feedback on their code. What do you do first?",
+                    "choices": [
+                        {"text": "Privately ask how they are feeling and listen", "next": 1, "xp": 12},
+                        {"text": "Remind them to be professional and move on", "next": 2, "xp": 3},
+                    ],
+                },
+                {
+                    "content": "They share they're overwhelmed. They fear missing expectations.",
+                    "choices": [
+                        {"text": "Validate feelings and ask what support would help", "next": 3, "xp": 15},
+                        {"text": "Offer to pair-program on a problem area", "next": 3, "xp": 10},
+                    ],
+                },
+                {
+                    "content": "They quiet down, but the tension remains.",
+                    "choices": [
+                        {"text": "Revisit the conversation later with empathy", "next": 3, "xp": 8},
+                        {"text": "Ignore it and focus on sprint tasks", "next": None, "xp": 1},
+                    ],
+                },
+                {
+                    "content": "You agree on a plan to adjust workload and checkpoints.",
+                    "choices": [
+                        {"text": "Summarize the plan and schedule a follow-up", "next": None, "xp": 12},
+                        {"text": "Leave it informal with no clear next step", "next": None, "xp": 4},
+                    ],
+                },
+            ],
+        },
+        {
+            "title": "Team Decision-Making",
+            "description": "Facilitate alignment on a technical approach. Tags: leadership, communication",
+            "episodes": [
+                {
+                    "content": "Two engineers disagree on architecture. How do you begin?",
+                    "choices": [
+                        {"text": "Set a clear decision-making framework", "next": 1, "xp": 12},
+                        {"text": "Let them debate freely and hope it resolves", "next": 2, "xp": 4},
+                    ],
+                },
+                {
+                    "content": "You outline criteria: scalability, complexity, and timeline.",
+                    "choices": [
+                        {"text": "Ask each to present trade-offs concisely", "next": 3, "xp": 12},
+                        {"text": "Pick one quickly to save time", "next": None, "xp": 2},
+                    ],
+                },
+                {
+                    "content": "Debate is heated and unfocused.",
+                    "choices": [
+                        {"text": "Refocus on criteria and timebox discussion", "next": 3, "xp": 10},
+                        {"text": "End the meeting without a decision", "next": None, "xp": 1},
+                    ],
+                },
+                {
+                    "content": "Team converges on a pragmatic option with a revisit checkpoint.",
+                    "choices": [
+                        {"text": "Document the decision and owners", "next": None, "xp": 12},
+                        {"text": "Move on without documenting rationale", "next": None, "xp": 3},
+                    ],
+                },
+            ],
+        },
+    ]
+
+    # Seed each story by title, then episodes by index, then choices by text per episode
+    for s in stories_payload:
+        # Check for story existence by title
+        existing_story_res = await session.exec(select(Story).where(Story.title == s["title"]))
+        existing_story = existing_story_res.first()
+        if not existing_story:
+            story = Story(title=s["title"], description=s["description"])
+            session.add(story)
+            await session.commit()
+            await session.refresh(story)
+        else:
+            story = existing_story
+
+        # Seed episodes
+        for idx, ep in enumerate(s["episodes"]):
+            ep_res = await session.exec(
+                select(Episode).where(Episode.story_id == story.id, Episode.index == idx)
+            )
+            existing_ep = ep_res.first()
+            if not existing_ep:
+                new_ep = Episode(story_id=story.id, index=idx, content=ep["content"])
+                session.add(new_ep)
+                await session.commit()
+                await session.refresh(new_ep)
+            else:
+                # Optionally update content if changed
+                new_ep = existing_ep
+                if existing_ep.content != ep["content"]:
+                    existing_ep.content = ep["content"]
+                    await session.commit()
+
+            # Seed choices per episode
+            for ch in ep.get("choices", []):
+                # Idempotency heuristic: identify a choice by (episode_id, text)
+                ch_res = await session.exec(
+                    select(Choice).where(Choice.episode_id == new_ep.id, Choice.text == ch["text"])
+                )
+                existing_choice = ch_res.first()
+                if not existing_choice:
+                    choice = Choice(
+                        episode_id=new_ep.id,
+                        text=ch["text"],
+                        next_episode_index=ch["next"],
+                        xp_delta=ch["xp"],
+                    )
+                    session.add(choice)
+                else:
+                    # Update attributes if needed to match seed spec
+                    updated = False
+                    if existing_choice.next_episode_index != ch["next"]:
+                        existing_choice.next_episode_index = ch["next"]
+                        updated = True
+                    if existing_choice.xp_delta != ch["xp"]:
+                        existing_choice.xp_delta = ch["xp"]
+                        updated = True
+                    if updated:
+                        session.add(existing_choice)
+            await session.commit()
+
+
+async def _seed_demo_journals(session: AsyncSession, user_id: int):
+    """Seed a couple of journal entries for the demo user if they don't exist."""
+    # Check if user has any journals
+    res = await session.exec(select(JournalEntry).where(JournalEntry.user_id == user_id))
+    existing = res.first()
+    if existing:
+        return  # already has entries; do not duplicate
+
+    entries = [
+        JournalEntry(
+            user_id=user_id,
+            content="Reflecting on leadership choices: listening first helped uncover hidden risks.",
+        ),
+        JournalEntry(
+            user_id=user_id,
+            content="Communication lesson: transparency early builds trust and reduces surprises.",
+        ),
+    ]
+    session.add_all(entries)
+    await session.commit()
