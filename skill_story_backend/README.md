@@ -73,8 +73,11 @@ uvicorn src.api.main:app --host 0.0.0.0 --port 3001 --reload
 - Or use the helper script:
   python tests/login_smoke.py --base-url http://localhost:3001 --email you@example.com --password "yourStrongPassword"
 
-Both /api/auth/login and its alias /api/auth/token return:
+Notes:
+- Both /api/auth/login and its alias /api/auth/token are available for compatibility with older clients.
+- Successful responses return:
   { "access_token": "...", "refresh_token": "...", "token_type": "bearer" }
+- Ensure .env is configured (see .env.example) and the database is reachable. Register a user before login if none exists.
 
 ## Demo Flow
 

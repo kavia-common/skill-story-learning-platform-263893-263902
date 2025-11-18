@@ -57,7 +57,18 @@ def _now_iso() -> str:
     response_model=TokenPairResponse,
 )
 async def register(payload: RegisterRequest):
-    """Register a new user (email unique)."""
+    """Register a new user (email unique).
+
+    Request body:
+      - email (EmailStr): Unique email for login
+      - password (str): 8-128 characters
+      - display_name (str, optional)
+
+    Returns:
+      200: TokenPairResponse { access_token, refresh_token, token_type }
+      400: Email already registered
+      422: Validation error for payload
+    """
     async with get_session() as session:
         # Check unique email
         res = await session.exec(select(User).where(User.email == payload.email))
@@ -99,7 +110,18 @@ async def register(payload: RegisterRequest):
     response_model=TokenPairResponse,
 )
 async def login(payload: LoginRequest):
-    """Authenticate using email/password."""
+    """Authenticate using email/password.
+
+    Request body:
+      - email (EmailStr)
+      - password (str): 8-128 characters
+
+    Returns:
+      200: TokenPairResponse on success
+      401: Invalid credentials
+      403: User inactive
+      422: Validation error for payload
+    """
     async with get_session() as session:
         res = await session.exec(select(User).where(User.email == payload.email))
         user = res.first()
@@ -119,7 +141,16 @@ async def login(payload: LoginRequest):
     response_model=TokenPairResponse,
 )
 async def login_alias(payload: LoginRequest):
-    """Alias endpoint that behaves like /auth/login for compatibility."""
+    """Alias endpoint that behaves like /auth/login for compatibility.
+
+    Request body:
+      - email (EmailStr)
+      - password (str)
+
+    Returns:
+      200: TokenPairResponse identical to /auth/login
+      4xx/422: Same semantics as /auth/login
+    """
     return await login(payload)
 
 
@@ -131,7 +162,16 @@ async def login_alias(payload: LoginRequest):
     response_model=AccessTokenResponse,
 )
 async def refresh(payload: RefreshRequest):
-    """Exchange a valid refresh token for a new access token."""
+    """Exchange a valid refresh token for a new access token.
+
+    Request body:
+      - refresh_token (str): A previously issued refresh token
+
+    Returns:
+      200: AccessTokenResponse with a new access_token and token_type
+      401: Invalid/expired token or wrong token type
+      422: Validation error for payload
+    """
     try:
         claims = decode_token(payload.refresh_token)
     except Exception:
@@ -153,5 +193,13 @@ async def refresh(payload: RefreshRequest):
     response_model=MeResponse,
 )
 async def me(user: User = Depends(get_current_user)):
-    """Return current user info."""
+    """Return current user info.
+
+    Headers:
+      - Authorization: Bearer <access_token>
+
+    Returns:
+      200: MeResponse { username, email, display_name, xp }
+      401/403: If token invalid/expired or user inactive
+    """
     return MeResponse(username=user.username, email=getattr(user, "email", None), display_name=user.display_name, xp=user.xp)
