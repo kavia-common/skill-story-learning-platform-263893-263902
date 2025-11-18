@@ -6,6 +6,7 @@ import json
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+
 def resolve_sync_url() -> str:
     # Prefer ALEMBIC_DB_URL if provided
     alembic = os.getenv("ALEMBIC_DB_URL")
@@ -54,11 +55,13 @@ def resolve_sync_url() -> str:
         "Optionally use RUNNING_DB_HOST/RUNNING_DB_PORT to override host/port in this environment."
     )
 
+
 def run(cmd: list, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     if extra_env:
         env.update(extra_env)
     return subprocess.run(cmd, env=env, text=True, capture_output=True)
+
 
 def verify(conn):
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -88,6 +91,7 @@ def verify(conn):
             "tables_missing": missing,
             "seed_summary": seeds
         }
+
 
 def main():
     sync_url = resolve_sync_url()
@@ -120,6 +124,7 @@ def main():
         print(json.dumps({"step": "verification", "report": report}, indent=2))
     finally:
         conn.close()
+
 
 if __name__ == "__main__":
     main()

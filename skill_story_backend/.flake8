@@ -1,7 +1,36 @@
 [flake8]
-exclude = .git,__pycache__,build,dist,venv
-select = E9,F
+# Limit linting to our project code to avoid vendor/third-party false positives
+# that appeared in the CI logs (e.g., site-packages).
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    env,
+    build,
+    dist,
+    .eggs,
+    *.egg-info,
+    .mypy_cache,
+    .pytest_cache
+# Directories to focus on
+paths = src, tests, utils
+
+# Increase max line length moderately for modern code style
 max-line-length = 120
+
+# Ignore rules that commonly produce noise in typed or FastAPI projects
+# - E203: Whitespace before ':', conflicts with Black
+# - W503: Line break before binary operator
+# - E501: Line too long (we use max-line-length instead)
+# - F401: Imported but unused (allow in __init__.py for package exports)
+# - F403/F405: Star imports/undefined names (some alembic templates may use *)
+# - D10x: Docstring checks not enforced by flake8 by default (if pydocstyle enabled elsewhere)
+extend-ignore = E203, W503, E501
 per-file-ignores =
-    __init__.py:F401
-max-complexity = 18
+    */__init__.py: F401
+    alembic/*: F401, F403, F405
+    src/api/generate_openapi.py: F401
+
+# Select default flake8 checks otherwise
+select = E,F,W

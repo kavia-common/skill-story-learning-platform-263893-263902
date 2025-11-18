@@ -66,14 +66,15 @@ async def register(payload: RegisterRequest):
 
     Returns:
       200: TokenPairResponse { access_token, refresh_token, token_type }
-      400: Email already registered
+      409: Email already registered (Conflict)
       422: Validation error for payload
     """
     async with get_session() as session:
-        # Check unique email
+        # Proactively enforce unique email to avoid DB-level IntegrityError surfacing as 500.
         res = await session.exec(select(User).where(User.email == payload.email))
         if res.first():
-            raise HTTPException(status_code=400, detail="Email already registered")
+            # Return 409 Conflict per requirement for duplicate email
+            raise HTTPException(status_code=409, detail="Email already registered")
         # Create username from email local part if not conflicting
         base_username = payload.email.split("@")[0]
         username = base_username
@@ -126,6 +127,7 @@ async def login(payload: LoginRequest):
         res = await session.exec(select(User).where(User.email == payload.email))
         user = res.first()
         if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
+            # Per requirement, ensure improper credentials return 401
             raise HTTPException(status_code=401, detail="Invalid credentials")
         if getattr(user, "is_active", True) is False:
             raise HTTPException(status_code=403, detail="User inactive")

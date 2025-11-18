@@ -14,6 +14,7 @@ down_revision = "0002_initial_schema"
 branch_labels = None
 depends_on = None
 
+
 def upgrade() -> None:
     conn = op.get_bind()
 
@@ -85,7 +86,11 @@ def upgrade() -> None:
 
     # Team Decision-Making with a quiz-style question as episode 1
     s = story_ids["Team Decision-Making"]
-    td0 = _ensure_episode(conn, s, 0, "Two engineers disagree on architecture. How do you begin?")
+    td0 = _ensure_episode(
+        conn,
+        s,
+        0,
+        "Two engineers disagree on architecture. How do you begin?")
     _ensure_choice(conn, td0, "Set a clear decision-making framework", 1, 12)
     _ensure_choice(conn, td0, "Let them debate freely and hope it resolves", 2, 4)
     td1 = _ensure_episode(
@@ -121,6 +126,7 @@ def upgrade() -> None:
             {"sid": lb_id, "idx": 0, "uid": demo_id},
         )
 
+
 def _ensure_episode(conn, story_id: int, index: int, content: str) -> int:
     row = conn.execute(
         text('SELECT id, content FROM "episode" WHERE story_id=:sid AND "index"=:idx'),
@@ -135,6 +141,7 @@ def _ensure_episode(conn, story_id: int, index: int, content: str) -> int:
         text('INSERT INTO "episode"(story_id, "index", content) VALUES (:sid, :idx, :c) RETURNING id'),
         {"sid": story_id, "idx": index, "c": content},
     ).scalar_one()
+
 
 def _ensure_choice(conn, episode_id: int, text_value: str, next_index: int | None, xp: int) -> int:
     row = conn.execute(
@@ -161,6 +168,7 @@ def _ensure_choice(conn, episode_id: int, text_value: str, next_index: int | Non
         ),
         {"eid": episode_id, "t": text_value, "n": next_index, "x": xp},
     ).scalar_one()
+
 
 def downgrade() -> None:
     # For simplicity, do not remove seeded data on downgrade.

@@ -16,6 +16,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("skill_story_backend")
 
+
 openapi_tags = [
     {"name": "health", "description": "Service health and status endpoints."},
     {"name": "auth", "description": "User registration, login, JWT tokens, and identity."},

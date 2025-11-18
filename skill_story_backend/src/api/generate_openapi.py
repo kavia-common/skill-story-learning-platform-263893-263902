@@ -4,6 +4,8 @@ import os
 from src.api.main import app
 
 # Generate and write the OpenAPI schema for external consumption
+
+
 # PUBLIC_INTERFACE
 def generate_and_write_openapi():
     """Generate and write OpenAPI schema to interfaces/openapi.json."""

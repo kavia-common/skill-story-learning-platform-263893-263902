@@ -14,6 +14,7 @@ down_revision = "0001_baseline"
 branch_labels = None
 depends_on = None
 
+
 def upgrade() -> None:
     # user table
     op.create_table(
@@ -79,6 +80,7 @@ def upgrade() -> None:
     # Add the FK from user.current_story_id to story.id now that story exists
     # (already declared with use_alter=True above, but make sure it's created)
     # Alembic handles via the FK declaration with use_alter.
+
 
 def downgrade() -> None:
     op.drop_index("ix_journal_user_id", table_name="journal_entry")

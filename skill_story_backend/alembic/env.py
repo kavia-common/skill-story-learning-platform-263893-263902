@@ -21,6 +21,7 @@ if config.config_file_name is not None:
 # Provide target metadata for 'autogenerate' support
 target_metadata = SQLModel.metadata
 
+
 def _resolve_db_url() -> str:
     """Resolve a synchronous SQLAlchemy URL for Alembic runs.
 
@@ -52,6 +53,7 @@ def _resolve_db_url() -> str:
     # last resort: return as-is
     return database_url
 
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     url = _resolve_db_url()
@@ -66,6 +68,7 @@ def run_migrations_offline() -> None:
 
     with context.begin_transaction():
         context.run_migrations()
+
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
@@ -88,6 +91,7 @@ def run_migrations_online() -> None:
 
         with context.begin_transaction():
             context.run_migrations()
+
 
 if context.is_offline_mode():
     run_migrations_offline()

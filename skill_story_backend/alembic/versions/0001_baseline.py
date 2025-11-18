@@ -12,9 +12,11 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+
 def upgrade() -> None:
     # Baseline marker, no schema changes
     pass
+
 
 def downgrade() -> None:
     pass
