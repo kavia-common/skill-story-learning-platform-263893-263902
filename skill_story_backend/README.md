@@ -14,6 +14,7 @@ This service provides the backend API for the Skill Story LMS: interactive stori
 - Async Postgres via SQLModel/SQLAlchemy (asyncpg)
 - Alembic migrations with baseline + initial schema + seed migration
 - Seeded demo story ("Leadership Basics") with 3 episodes and branching choices
+- Additional bundled story: "The Focus Master" (productivity/focus) seeded idempotently at startup
 - Simple auth (JWT) with register/login/refresh endpoints
 - Centralized error handling with consistent response envelopes: `{ success, data | error }`
 - CORS configured via `FRONTEND_ORIGIN`
@@ -99,6 +100,17 @@ Generate the OpenAPI JSON into `interfaces/openapi.json`:
 ```bash
 python -m src.api.generate_openapi
 ```
+
+## Content Seeding: "The Focus Master"
+
+- The story "The Focus Master" is added as bundled content and seeded idempotently during startup.
+- If you need to insert it once in an authoring or staging DB without full startup, you can run:
+
+```bash
+PYTHONPATH=. python -m src.api.modules.seed_focus_master_once
+```
+
+This prints a small JSON report and is safe to rerun (idempotent).
 
 ## Migrations (Alembic)
 

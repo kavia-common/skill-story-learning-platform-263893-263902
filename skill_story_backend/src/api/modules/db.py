@@ -149,6 +149,18 @@ async def _run_seed_safe() -> None:
             # Seed the bundled stories
             await _seed_stories(session)
 
+            # Seed the provided 'The Focus Master' story as additional published content
+            try:
+                from .seed_focus_master import seed_focus_master
+
+                fm_result = await seed_focus_master(session)
+                logger.info(
+                    "Focus Master seeding done",
+                    extra={"story_id": fm_result.get("story_id"), "episodes": fm_result.get("episodes"), "choices": fm_result.get("choices")},
+                )
+            except Exception as e:
+                logger.error("Focus Master seeding failed", extra={"error": str(e)})
+
             # Ensure demo_user has initial progress (only if not already set)
             res = await session.exec(select(User).where(User.username == demo_username))
             demo_user = res.first()
