@@ -11,6 +11,14 @@ Steps:
    export ALEMBIC_DB_URL=postgresql://user:pass@host:port/db
 
 3) Run:
+   # If your DB is reachable via a special host/port (e.g., from running_containers),
+   # you can override via environment:
+   # export RUNNING_DB_HOST=vscode-internal-37210-beta.beta01.cloud.kavia.ai
+   # export RUNNING_DB_PORT=3020
+   # And provide credentials/db:
+   # export DB_NAME=<your_db>
+   # export DB_USER=<your_user>
+   # export DB_PASSWORD=<your_password>
    PYTHONPATH=. python utils/run_and_verify_migrations.py
 
 The script logs:

@@ -11,6 +11,8 @@ def resolve_sync_url() -> str:
     alembic = os.getenv("ALEMBIC_DB_URL")
     if alembic and alembic.strip():
         return alembic.strip()
+
+    # Normalize DATABASE_URL (async -> sync)
     db = os.getenv("DATABASE_URL", "").strip()
     if db.startswith("postgresql+asyncpg://"):
         return "postgresql://" + db[len("postgresql+asyncpg://") :]
@@ -18,17 +20,39 @@ def resolve_sync_url() -> str:
         return "postgresql://" + db[len("postgres://") :]
     if db:
         return db
-    # Build from parts if available
-    host = os.getenv("DB_HOST") or os.getenv("POSTGRES_HOST")
-    port = os.getenv("DB_PORT") or os.getenv("POSTGRES_PORT")
-    name = os.getenv("DB_NAME") or os.getenv("POSTGRES_DB")
-    user = os.getenv("DB_USER") or os.getenv("POSTGRES_USER")
-    password = os.getenv("DB_PASSWORD") or os.getenv("POSTGRES_PASSWORD")
+
+    # Build from parts if available (support both app-style and postgres-style vars)
+    host = (
+        os.getenv("ALEMBIC_HOST")
+        or os.getenv("RUNNING_DB_HOST")
+        or os.getenv("DB_HOST")
+        or os.getenv("POSTGRES_HOST")
+    )
+    port = (
+        os.getenv("ALEMBIC_PORT")
+        or os.getenv("RUNNING_DB_PORT")
+        or os.getenv("DB_PORT")
+        or os.getenv("POSTGRES_PORT")
+    )
+    name = os.getenv("ALEMBIC_DB_NAME") or os.getenv("DB_NAME") or os.getenv("POSTGRES_DB")
+    user = os.getenv("ALEMBIC_DB_USER") or os.getenv("DB_USER") or os.getenv("POSTGRES_USER")
+    password = os.getenv("ALEMBIC_DB_PASSWORD") or os.getenv("DB_PASSWORD") or os.getenv("POSTGRES_PASSWORD")
+
+    # If host/port not explicitly provided, try known runtime metadata fallback from work item
+    # This is a non-secret, externally reachable host/port for the running database container.
+    if not host and not port:
+        host = "vscode-internal-37210-beta.beta01.cloud.kavia.ai"
+        port = "3020"
+
     if all([host, port, name, user, password]):
         return f"postgresql://{user}:{password}@{host}:{port}/{name}"
-    # As a last resort, fall back to sample from the provided env for this workspace
-    # Note: this won’t include secrets; adjust if your environment differs
-    return "postgresql://skill_user:your-strong-password@skill_story_database:5432/skill_story"
+
+    # Final explicit message to guide operator rather than returning an unusable URL
+    raise SystemExit(
+        "Database connection details are missing. Set ALEMBIC_DB_URL or provide "
+        "DATABASE_URL (async accepted) or set DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD. "
+        "Optionally use RUNNING_DB_HOST/RUNNING_DB_PORT to override host/port in this environment."
+    )
 
 def run(cmd: list, extra_env: dict | None = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
