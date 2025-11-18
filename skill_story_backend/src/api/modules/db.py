@@ -1,4 +1,6 @@
 from typing import Optional, List, Dict, Any
+import asyncio
+import logging
 
 from sqlmodel import SQLModel, Field, Relationship, select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -7,7 +9,11 @@ from sqlalchemy.orm import sessionmaker
 
 from .config import settings
 
+# Structured logger for DB module
+logger = logging.getLogger("skill_story_backend.db")
+
 # Define models
+
 
 class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -60,54 +66,123 @@ engine: Optional[AsyncEngine] = None
 AsyncSessionLocal = None
 
 
+async def _connect_with_retries() -> None:
+    """Create engine and test connection with retries and backoff."""
+    global engine, AsyncSessionLocal
+    url = settings.db_url()
+    if engine is None:
+        logger.info(
+            "Creating async engine",
+            extra={"db_url_driver": url.split("://", 1)[0], "retries": settings.DB_CONNECT_MAX_RETRIES},
+        )
+        # pool_pre_ping=True to validate connections from the pool
+        engine = create_async_engine(url, echo=False, future=True, pool_pre_ping=True)
+        AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+
+    attempts = 0
+    last_err: Optional[Exception] = None
+    while attempts < settings.DB_CONNECT_MAX_RETRIES:
+        attempts += 1
+        try:
+            async with engine.begin() as conn:
+                # simple connect test; no-op
+                await conn.run_sync(lambda conn: None)
+            logger.info("Database connection established", extra={"attempt": attempts})
+            return
+        except Exception as e:
+            last_err = e
+            backoff = settings.DB_CONNECT_BACKOFF_SECONDS * attempts
+            logger.warning(
+                "Database connection attempt failed; retrying",
+                extra={"attempt": attempts, "backoff_seconds": backoff, "error": str(e)},
+            )
+            await asyncio.sleep(backoff)
+    # Retries exhausted
+    logger.error(
+        "Failed to connect to database after retries",
+        extra={"retries": settings.DB_CONNECT_MAX_RETRIES, "error": str(last_err) if last_err else "unknown"},
+    )
+    # Do not raise to avoid crashing startup; subsequent DB usage will still error until DB becomes available.
+
+
+async def _create_schema_safe() -> None:
+    """Create tables if not exist, with error handling and logs."""
+    if engine is None:
+        return
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(SQLModel.metadata.create_all)
+        logger.info("Database schema ensured (create_all successful)")
+    except Exception as e:
+        logger.error("Schema creation failed", extra={"error": str(e)})
+        # Avoid raising to not crash startup
+
+
+async def _run_seed_safe() -> None:
+    """Run seeding steps with idempotency and logging, safe to call multiple times."""
+    try:
+        async with get_session() as session:
+            demo_username = "demo_user"
+
+            # Ensure demo user exists
+            res = await session.exec(select(User).where(User.username == demo_username))
+            user = res.first()
+            if not user:
+                user = User(username=demo_username, display_name="Demo User", xp=0)
+                session.add(user)
+                await session.commit()
+                await session.refresh(user)
+                logger.info("Seeded demo user", extra={"username": demo_username, "user_id": user.id})
+            else:
+                logger.info("Demo user exists", extra={"username": demo_username, "user_id": user.id})
+
+            # Seed the bundled stories
+            await _seed_stories(session)
+
+            # Ensure demo_user has initial progress (only if not already set)
+            res = await session.exec(select(User).where(User.username == demo_username))
+            demo_user = res.first()
+            if demo_user and demo_user.current_story_id is None:
+                res_s = await session.exec(select(Story).where(Story.title == "Leadership Basics"))
+                story_obj = res_s.first()
+                if story_obj:
+                    demo_user.current_story_id = story_obj.id
+                    demo_user.current_episode_index = 0
+                    await session.commit()
+                    logger.info("Initialized demo user progress", extra={"story_id": story_obj.id})
+
+            # Optionally seed a couple of journal entries for the demo user if none exist
+            await _seed_demo_journals(session, user_id=user.id)
+            logger.info("Seeding completed")
+    except Exception as e:
+        logger.error("Seeding failed", extra={"error": str(e)})
+        # Swallow to avoid startup crash; can be retried later.
+
+
+# PUBLIC_INTERFACE
 async def init_db():
     """Initialize database engine, create tables, and seed demo data.
 
-    This function is idempotent: it checks for existing records by unique fields
-    (e.g., usernames and story titles) before inserting. Running multiple times
-    will not duplicate data.
+    Resiliency improvements:
+    - Retries with backoff for initial DB connectivity
+    - Safe schema creation and seeding (non-fatal on failure)
+    - Optional seed deferral to avoid blocking service readiness
     """
-    global engine, AsyncSessionLocal
-    if engine is None:
-        engine = create_async_engine(settings.db_url(), echo=False, future=True)
-        AsyncSessionLocal = sessionmaker(
-            bind=engine, class_=AsyncSession, expire_on_commit=False
-        )
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    await _connect_with_retries()
+    await _create_schema_safe()
 
-    # Seed demo data idempotently
-    async with get_session() as session:
-        demo_username = "demo_user"
-
-        # Ensure demo user exists
-        res = await session.exec(select(User).where(User.username == demo_username))
-        user = res.first()
-        if not user:
-            user = User(username=demo_username, display_name="Demo User", xp=0)
-            session.add(user)
-            await session.commit()
-            await session.refresh(user)
-
-        # Seed the bundled stories
-        await _seed_stories(session)
-
-        # Ensure demo_user has initial progress (only if not already set)
-        res = await session.exec(select(User).where(User.username == demo_username))
-        demo_user = res.first()
-        if demo_user and demo_user.current_story_id is None:
-            # Start at first story (Leadership Basics) first episode if available
-            res_s = await session.exec(select(Story).where(Story.title == "Leadership Basics"))
-            story_obj = res_s.first()
-            if story_obj:
-                demo_user.current_story_id = story_obj.id
-                demo_user.current_episode_index = 0
-                await session.commit()
-
-        # Optionally seed a couple of journal entries for demo_user if none exist
-        await _seed_demo_journals(session, user_id=user.id)
+    if settings.DB_SEED_DEFER:
+        # Defer heavy seeding to background so readiness isn't blocked
+        logger.info("Deferring DB seeding to background task", extra={"defer": True})
+        try:
+            asyncio.create_task(_run_seed_safe())
+        except Exception as e:
+            logger.error("Failed to schedule background seeding", extra={"error": str(e)})
+    else:
+        await _run_seed_safe()
 
 
+# PUBLIC_INTERFACE
 async def close_db():
     """Close engine reference (async engines close with GC; placeholder)."""
     # Nothing explicit needed; present for symmetry/future
@@ -121,6 +196,9 @@ class SessionContext:
         self.session: Optional[AsyncSession] = None
 
     async def __aenter__(self) -> AsyncSession:
+        if AsyncSessionLocal is None:
+            # Ensure we at least attempted to connect if get_session is used before init_db
+            await _connect_with_retries()
         self.session = AsyncSessionLocal()
         return self.session
 
@@ -132,6 +210,7 @@ class SessionContext:
             await self.session.close()
 
 
+# PUBLIC_INTERFACE
 def get_session():
     """Helper to get an async session context manager."""
     return SessionContext()
@@ -286,8 +365,10 @@ async def _seed_stories(session: AsyncSession):
             session.add(story)
             await session.commit()
             await session.refresh(story)
+            logger.info("Seeded story", extra={"title": s["title"], "story_id": story.id})
         else:
             story = existing_story
+            logger.info("Story exists", extra={"title": s["title"], "story_id": story.id})
 
         # Seed episodes
         for idx, ep in enumerate(s["episodes"]):
@@ -300,12 +381,14 @@ async def _seed_stories(session: AsyncSession):
                 session.add(new_ep)
                 await session.commit()
                 await session.refresh(new_ep)
+                logger.info("Seeded episode", extra={"story_id": story.id, "ep_index": idx, "ep_id": new_ep.id})
             else:
                 # Optionally update content if changed
                 new_ep = existing_ep
                 if existing_ep.content != ep["content"]:
                     existing_ep.content = ep["content"]
                     await session.commit()
+                    logger.info("Updated episode content", extra={"story_id": story.id, "ep_index": idx})
 
             # Seed choices per episode
             for ch in ep.get("choices", []):
@@ -322,6 +405,10 @@ async def _seed_stories(session: AsyncSession):
                         xp_delta=ch["xp"],
                     )
                     session.add(choice)
+                    logger.info(
+                        "Seeded choice",
+                        extra={"episode_id": new_ep.id, "text": ch["text"], "next": ch["next"], "xp": ch["xp"]},
+                    )
                 else:
                     # Update attributes if needed to match seed spec
                     updated = False
@@ -333,6 +420,16 @@ async def _seed_stories(session: AsyncSession):
                         updated = True
                     if updated:
                         session.add(existing_choice)
+                        logger.info(
+                            "Updated choice",
+                            extra={
+                                "choice_id": existing_choice.id,
+                                "episode_id": new_ep.id,
+                                "text": ch["text"],
+                                "next": ch["next"],
+                                "xp": ch["xp"],
+                            },
+                        )
             await session.commit()
 
 
@@ -342,6 +439,7 @@ async def _seed_demo_journals(session: AsyncSession, user_id: int):
     res = await session.exec(select(JournalEntry).where(JournalEntry.user_id == user_id))
     existing = res.first()
     if existing:
+        logger.info("Demo journals already exist", extra={"user_id": user_id})
         return  # already has entries; do not duplicate
 
     entries = [
@@ -356,3 +454,4 @@ async def _seed_demo_journals(session: AsyncSession, user_id: int):
     ]
     session.add_all(entries)
     await session.commit()
+    logger.info("Seeded demo journals", extra={"user_id": user_id, "count": len(entries)})

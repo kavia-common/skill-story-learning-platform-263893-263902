@@ -82,7 +82,17 @@ async def unhandled_error_handler(request: Request, exc: Exception):
 # Startup/Shutdown events
 @app.on_event("startup")
 async def on_startup():
-    logger.info("Starting Skill Story LMS API")
+    logger.info(
+        "Starting Skill Story LMS API",
+        extra={
+            "host": "0.0.0.0",
+            "port": 3001,
+            "db_driver": (settings.db_url().split('://', 1)[0] if settings.DATABASE_URL or settings.DB_HOST else None),
+            "seed_deferred": settings.DB_SEED_DEFER,
+            "db_retries": settings.DB_CONNECT_MAX_RETRIES,
+            "db_backoff": settings.DB_CONNECT_BACKOFF_SECONDS,
+        },
+    )
     settings.validate()  # Validate envs early
     await init_db()  # Create tables and seed demo data
 

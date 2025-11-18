@@ -21,33 +21,50 @@ class Settings:
     APP_SECRET: Optional[str] = os.getenv("APP_SECRET")
     FRONTEND_ORIGIN: Optional[str] = os.getenv("FRONTEND_ORIGIN")
 
+    # Connection resiliency tunables
+    DB_CONNECT_MAX_RETRIES: int = int(os.getenv("DB_CONNECT_MAX_RETRIES", "10"))
+    DB_CONNECT_BACKOFF_SECONDS: float = float(os.getenv("DB_CONNECT_BACKOFF_SECONDS", "1.5"))
+    DB_SEED_DEFER: bool = os.getenv("DB_SEED_DEFER", "true").lower() in ("1", "true", "yes")
+
     def db_url(self) -> str:
-        """Return a SQLAlchemy-compatible async PostgreSQL URL."""
-        if self.DATABASE_URL:
-            # Ensure async driver scheme for SQLAlchemy 2.x
-            if self.DATABASE_URL.startswith("postgresql+asyncpg://"):
-                return self.DATABASE_URL
-            if self.DATABASE_URL.startswith("postgres://"):
-                return "postgresql+asyncpg://" + self.DATABASE_URL[len("postgres://") :]
-            if self.DATABASE_URL.startswith("postgresql://"):
-                return "postgresql+asyncpg://" + self.DATABASE_URL[len("postgresql://") :]
-            return self.DATABASE_URL
+        """Return a SQLAlchemy-compatible async PostgreSQL URL.
+
+        Supports common provider formats:
+        - postgresql+asyncpg://user:pass@host:port/db
+        - postgresql://user:pass@host:port/db
+        - postgres://user:pass@host:port/db
+        The latter two are normalized to asyncpg driver.
+        """
+        url = self.DATABASE_URL
+        if url:
+            # Trim whitespace
+            url = url.strip()
+            # Many environments provide 'postgres://'; normalize to 'postgresql+asyncpg://'
+            if url.startswith("postgresql+asyncpg://"):
+                return url
+            if url.startswith("postgres://"):
+                return "postgresql+asyncpg://" + url[len("postgres://") :]
+            if url.startswith("postgresql://"):
+                return "postgresql+asyncpg://" + url[len("postgresql://") :]
+            # If user already provided another async dialect we respect it
+            return url
+
         # Build from parts if DATABASE_URL not provided
-        if not all([self.DB_HOST, self.DB_PORT, self.DB_NAME, self.DB_USER, self.DB_PASSWORD]):
+        required_parts = [self.DB_HOST, self.DB_PORT, self.DB_NAME, self.DB_USER, self.DB_PASSWORD]
+        if not all(required_parts):
             raise ValueError(
                 "Database configuration missing. Provide DATABASE_URL or all of DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD."
             )
         return f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
 
     def validate(self):
-        """Validate critical environment variables."""
+        """Validate critical environment variables (non-secrets)."""
         missing = []
         if not self.APP_SECRET:
             missing.append("APP_SECRET")
-        if not self.FRONTEND_ORIGIN:
-            # FRONTEND_ORIGIN is recommended; not strictly required to run
-            pass
-        # DB validated via db_url call
+        # FRONTEND_ORIGIN is optional but recommended
+
+        # Validate DB URL composition and driver normalization
         try:
             _ = self.db_url()
         except Exception as e:
