@@ -36,18 +36,21 @@ No secrets are committed to the codebase.
 
 ## Local Development
 
-1. Create and populate `.env` based on `.env.example`.
+1. Create and populate `.env` based on `.env.example`. Ensure either `DATABASE_URL` or all of `DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD` are set, and set `APP_SECRET`.
 2. Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Run migrations (first time):
+3. Apply migrations (first time) to create tables and seed initial content:
 
 ```bash
 # If DATABASE_URL is async (postgresql+asyncpg://...), provide ALEMBIC_DB_URL=postgresql://...
+# Or let utils helper derive a sync URL from your env:
 export $(grep -v '^#' .env | xargs)  # load envs in your shell (optional)
+PYTHONPATH=. python utils/run_and_verify_migrations.py
+# Alternatively:
 alembic upgrade head
 ```
 
@@ -60,6 +63,7 @@ uvicorn src.api.main:app --host 0.0.0.0 --port 3001 --reload
 5. Visit:
 - Health: `GET http://localhost:3001/health`
 - Docs: `http://localhost:3001/docs`
+- WebSocket note: `GET http://localhost:3001/docs/websocket-help`
 
 ### Verify Login Locally
 
@@ -73,6 +77,21 @@ uvicorn src.api.main:app --host 0.0.0.0 --port 3001 --reload
 
 - Or use the helper script:
   python tests/login_smoke.py --base-url http://localhost:3001 --email you@example.com --password "yourStrongPassword"
+
+- Full smoke (register if needed -> login -> me):
+  python tests/smoke_register_login_me.py --base-url http://localhost:3001 --email you@example.com --password "yourStrongPassword" --display-name "Your Name"
+
+### Verify Stories and "The Focus Master"
+
+- List stories:
+  GET http://localhost:3001/api/stories
+
+- Fetch first episode of "The Focus Master":
+  1) Find its id from the list response (title == "The Focus Master")
+  2) GET /api/stories/{id}/episodes/0
+
+- Or use the helper script:
+  python tests/smoke_stories_focus_master.py --base-url http://localhost:3001
 
 Notes:
 - Both /api/auth/login and its alias /api/auth/token are available for compatibility with older clients.
