@@ -114,6 +114,8 @@ app.include_router(journal.router, prefix="/api")
 
 
 # PUBLIC_INTERFACE
+
+
 @app.get(
     "/docs/websocket-help",
     tags=["health"],

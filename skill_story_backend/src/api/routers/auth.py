@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field, EmailStr
 from sqlmodel import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..modules.db import get_session, User
 from ..modules.auth_utils import hash_password, verify_password, issue_token_pair, decode_token
@@ -69,35 +70,42 @@ async def register(payload: RegisterRequest):
       409: Email already registered (Conflict)
       422: Validation error for payload
     """
-    async with get_session() as session:
-        # Proactively enforce unique email to avoid DB-level IntegrityError surfacing as 500.
-        res = await session.exec(select(User).where(User.email == payload.email))
-        if res.first():
-            # Return 409 Conflict per requirement for duplicate email
-            raise HTTPException(status_code=409, detail="Email already registered")
-        # Create username from email local part if not conflicting
-        base_username = payload.email.split("@")[0]
-        username = base_username
-        # ensure uniqueness on username as well
-        idx = 1
-        while True:
-            res_u = await session.exec(select(User).where(User.username == username))
-            if not res_u.first():
-                break
-            idx += 1
-            username = f"{base_username}{idx}"
-        user = User(
-            username=username,
-            display_name=payload.display_name or username,
-            email=payload.email,
-            password_hash=hash_password(payload.password),
-            is_active=True,
-            created_at=_now_iso(),
-            updated_at=_now_iso(),
-            xp=0,
-        )
-        session.add(user)
-        await session.commit()
+    try:
+        async with get_session() as session:
+            # Proactively enforce unique email to avoid DB-level IntegrityError surfacing as 500.
+            res = await session.exec(select(User).where(User.email == payload.email))
+            if res.first():
+                # Return 409 Conflict per requirement for duplicate email
+                raise HTTPException(status_code=409, detail="Email already registered")
+            # Create username from email local part if not conflicting
+            base_username = payload.email.split("@")[0]
+            username = base_username
+            # ensure uniqueness on username as well
+            idx = 1
+            while True:
+                res_u = await session.exec(select(User).where(User.username == username))
+                if not res_u.first():
+                    break
+                idx += 1
+                username = f"{base_username}{idx}"
+            user = User(
+                username=username,
+                display_name=payload.display_name or username,
+                email=payload.email,
+                password_hash=hash_password(payload.password),
+                is_active=True,
+                created_at=_now_iso(),
+                updated_at=_now_iso(),
+                xp=0,
+            )
+            session.add(user)
+            await session.commit()
+    except SQLAlchemyError as e:
+        # Convert DB errors to a clearer 503 for operators (e.g., migrations missing or DB down)
+        raise HTTPException(status_code=503, detail=f"Database unavailable or schema error: {str(e)}")
+    except Exception:
+        # Let FastAPI's global handler wrap unexpected issues
+        raise
 
     access, refresh = issue_token_pair(subject=username)
     return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
@@ -123,14 +131,20 @@ async def login(payload: LoginRequest):
       403: User inactive
       422: Validation error for payload
     """
-    async with get_session() as session:
-        res = await session.exec(select(User).where(User.email == payload.email))
-        user = res.first()
-        if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
-            # Per requirement, ensure improper credentials return 401
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        if getattr(user, "is_active", True) is False:
-            raise HTTPException(status_code=403, detail="User inactive")
+    try:
+        async with get_session() as session:
+            res = await session.exec(select(User).where(User.email == payload.email))
+            user = res.first()
+            if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
+                # Per requirement, ensure improper credentials return 401
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+            if getattr(user, "is_active", True) is False:
+                raise HTTPException(status_code=403, detail="User inactive")
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=503, detail=f"Database unavailable or schema error: {str(e)}")
+    except Exception:
+        raise
+
     access, refresh = issue_token_pair(subject=user.username)
     return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
 

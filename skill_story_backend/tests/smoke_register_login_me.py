@@ -14,6 +14,7 @@ Usage:
 import argparse
 import json
 import sys
+import os
 
 import httpx
 
@@ -26,7 +27,7 @@ def _post_json(url: str, payload: dict, headers: dict | None = None) -> httpx.Re
 def main():
     """Run auth smoke: register if needed, then login and call /me."""
     parser = argparse.ArgumentParser(description="Auth smoke: register->login->me")
-    parser.add_argument("--base-url", default="http://localhost:3001", help="Backend base URL, e.g., http://localhost:3001")
+    parser.add_argument("--base-url", default=os.getenv("BACKEND_BASE_URL", "http://localhost:3001"), help="Backend base URL, e.g., http://localhost:3001")
     parser.add_argument("--email", required=True, help="Email for register/login")
     parser.add_argument("--password", required=True, help="Password for register/login")
     parser.add_argument("--display-name", default=None, help="Optional display name for registration")
@@ -43,7 +44,9 @@ def main():
         reg_resp = _post_json(f"{base}/api/auth/register", reg_payload)
         report["register_status"] = reg_resp.status_code
         try:
-            report["register_body"] = reg_resp.json()
+            # redact tokens if provided by registration
+            reg_body = reg_resp.json()
+            report["register_body"] = {k: ("<redacted>" if "token" in k else v) for k, v in reg_body.items()} if isinstance(reg_body, dict) else reg_body
         except Exception:
             report["register_body_raw"] = reg_resp.text
         if reg_resp.status_code not in (200, 409):
@@ -62,8 +65,8 @@ def main():
         except Exception:
             print(json.dumps({"ok": False, "step": "login", "error": "Non-JSON response", "report": report}, indent=2))
             sys.exit(1)
-        report["login_body"] = {k: ("<redacted>" if "token" in k else v) for k, v in login_body.items()}
-        if login_resp.status_code != 200 or "access_token" not in login_body:
+        report["login_body"] = {k: ("<redacted>" if "token" in k else v) for k, v in (login_body.items() if isinstance(login_body, dict) else [])}
+        if login_resp.status_code != 200 or not isinstance(login_body, dict) or "access_token" not in login_body:
             print(json.dumps({"ok": False, "step": "login", "report": report}, indent=2))
             sys.exit(1)
         access_token = login_body["access_token"]
@@ -81,7 +84,11 @@ def main():
             print(json.dumps({"ok": False, "step": "me", "error": "Non-JSON response", "report": report}, indent=2))
             sys.exit(1)
         report["me_body"] = me_body
-        ok = me_resp.status_code == 200 and isinstance(me_body, dict) and all(k in me_body for k in ("username", "display_name", "xp"))
+        ok = (
+            me_resp.status_code == 200
+            and isinstance(me_body, dict)
+            and all(k in me_body for k in ("username", "display_name", "xp"))
+        )
         print(json.dumps({"ok": ok, "step": "done", "report": report}, indent=2))
         sys.exit(0 if ok else 1)
     except Exception as e:
