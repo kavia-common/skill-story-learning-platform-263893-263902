@@ -60,6 +60,22 @@ uvicorn src.api.main:app --host 0.0.0.0 --port 3001 --reload
 - Health: `GET http://localhost:3001/health`
 - Docs: `http://localhost:3001/docs`
 
+### Verify Login Locally
+
+- Register a test user (if you don't have one yet):
+  `POST http://localhost:3001/api/auth/register` with body:
+  {"email":"you@example.com","password":"yourStrongPassword","display_name":"Your Name"}
+
+- Then test login:
+  `POST http://localhost:3001/api/auth/login` with body:
+  {"email":"you@example.com","password":"yourStrongPassword"}
+
+- Or use the helper script:
+  python tests/login_smoke.py --base-url http://localhost:3001 --email you@example.com --password "yourStrongPassword"
+
+Both /api/auth/login and its alias /api/auth/token return:
+  { "access_token": "...", "refresh_token": "...", "token_type": "bearer" }
+
 ## Demo Flow
 
 - Register/login to obtain JWT or use seeded `demo_user` via token issuance after registration.
