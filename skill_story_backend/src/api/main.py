@@ -18,7 +18,7 @@ logger = logging.getLogger("skill_story_backend")
 
 openapi_tags = [
     {"name": "health", "description": "Service health and status endpoints."},
-    {"name": "auth", "description": "Authentication stub for demo/local use."},
+    {"name": "auth", "description": "User registration, login, JWT tokens, and identity."},
     {"name": "stories", "description": "Stories, episodes, and branching choices."},
     {"name": "progress", "description": "XP and story progression endpoints."},
     {"name": "profile", "description": "User profile endpoints."},
@@ -38,7 +38,7 @@ app.add_middleware(
     allow_origins=[settings.FRONTEND_ORIGIN] if settings.FRONTEND_ORIGIN else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "Authorization"],
 )
 
 # Basic rate limiting stub (no-op, placeholder for future)

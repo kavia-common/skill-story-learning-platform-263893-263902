@@ -1,11 +1,12 @@
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Header, Path
+from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
 from ..modules.db import get_session, Story, Episode, Choice, User
 from ..modules.errors import ApplicationError, ErrorCode, success
+from ..modules.security import get_current_user
 
 router = APIRouter(tags=["stories"])
 
@@ -44,17 +45,6 @@ class SubmitChoiceResponse(BaseModel):
     current_xp: int
     reached_end: bool
     next_episode: Optional[EpisodeModel] = None
-
-
-async def get_demo_user(x_demo_user: Optional[str] = Header(None, alias="X-Demo-User")) -> User:
-    if not x_demo_user:
-        raise ApplicationError("Missing X-Demo-User header", ErrorCode.AUTHENTICATION_ERROR, status_code=401)
-    async with get_session() as session:
-        res = await session.exec(select(User).where(User.username == x_demo_user))
-        user = res.first()
-        if not user:
-            raise ApplicationError("User not found", ErrorCode.AUTHENTICATION_ERROR, status_code=401)
-        return user
 
 
 # PUBLIC_INTERFACE
@@ -130,10 +120,10 @@ async def get_episode(story_id: int = Path(..., ge=1), ep_index: int = Path(...,
 @router.post(
     "/stories/{story_id}/choices",
     summary="Submit a choice and advance",
-    description="Submits a choice for current episode, updates XP and progression, and returns next episode payload and XP.",
+    description="Submits a choice for current episode, updates XP and progression, and returns next episode payload and XP. Requires auth.",
     response_model=dict,
 )
-async def submit_choice(payload: SubmitChoiceRequest, user: User = Depends(get_demo_user), story_id: int = Path(..., ge=1)):
+async def submit_choice(payload: SubmitChoiceRequest, user: User = Depends(get_current_user), story_id: int = Path(..., ge=1)):
     async with get_session() as session:
         # Ensure user and current story
         db_user = await session.get(User, user.id)

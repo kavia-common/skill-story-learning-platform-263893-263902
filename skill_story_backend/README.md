@@ -26,6 +26,8 @@ Copy `.env.example` to `.env` and set values:
   - DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
 - APP_SECRET (required)
 - FRONTEND_ORIGIN (recommended)
+- ACCESS_TOKEN_EXPIRE_MINUTES (default 60)
+- REFRESH_TOKEN_EXPIRE_DAYS (default 14)
 
 No secrets are committed to the codebase.
 

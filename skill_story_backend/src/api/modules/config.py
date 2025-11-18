@@ -21,6 +21,10 @@ class Settings:
     APP_SECRET: Optional[str] = os.getenv("APP_SECRET")
     FRONTEND_ORIGIN: Optional[str] = os.getenv("FRONTEND_ORIGIN")
 
+    # Token expirations
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+    REFRESH_TOKEN_EXPIRE_DAYS: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "14"))
+
     # Connection resiliency tunables
     DB_CONNECT_MAX_RETRIES: int = int(os.getenv("DB_CONNECT_MAX_RETRIES", "10"))
     DB_CONNECT_BACKOFF_SECONDS: float = float(os.getenv("DB_CONNECT_BACKOFF_SECONDS", "1.5"))

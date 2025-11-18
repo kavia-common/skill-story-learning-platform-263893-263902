@@ -1,43 +1,145 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 
-import jwt
-from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
-
-from ..modules.config import settings
-from ..modules.db import get_session, User
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, Field, EmailStr
 from sqlmodel import select
+
+from ..modules.db import get_session, User
+from ..modules.auth_utils import hash_password, verify_password, issue_token_pair, decode_token
+from ..modules.security import get_current_user
 
 router = APIRouter(tags=["auth"])
 
 
-class TokenResponse(BaseModel):
-    access_token: str = Field(..., description="JWT access token for demo use")
+class TokenPairResponse(BaseModel):
+    access_token: str = Field(..., description="JWT access token")
+    refresh_token: str = Field(..., description="JWT refresh token")
     token_type: str = "bearer"
+
+
+class AccessTokenResponse(BaseModel):
+    access_token: str = Field(..., description="JWT access token")
+    token_type: str = "bearer"
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr = Field(..., description="Unique email")
+    password: str = Field(..., min_length=8, max_length=128, description="Password")
+    display_name: Optional[str] = Field(None, max_length=100, description="Display name")
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr = Field(..., description="Email")
+    password: str = Field(..., min_length=8, max_length=128, description="Password")
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., description="Refresh token")
+
+
+class MeResponse(BaseModel):
+    username: str
+    email: Optional[str]
+    display_name: str
+    xp: int
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 # PUBLIC_INTERFACE
 @router.post(
-    "/auth/token",
-    summary="Issue demo token",
-    description="Issues a short-lived JWT for demo purposes if X-Demo-User is provided.",
-    response_model=TokenResponse,
+    "/auth/register",
+    summary="Register",
+    description="Create a new user with email/password and return token pair.",
+    response_model=TokenPairResponse,
 )
-async def issue_token(x_demo_user: Optional[str] = Header(None, alias="X-Demo-User")):
-    """Issue a JWT for the provided demo user header."""
-    if not x_demo_user:
-        raise HTTPException(status_code=400, detail="X-Demo-User header required")
-    # Ensure user exists
+async def register(payload: RegisterRequest):
+    """Register a new user (email unique)."""
     async with get_session() as session:
-        res = await session.exec(select(User).where(User.username == x_demo_user))
+        # Check unique email
+        res = await session.exec(select(User).where(User.email == payload.email))
+        if res.first():
+            raise HTTPException(status_code=400, detail="Email already registered")
+        # Create username from email local part if not conflicting
+        base_username = payload.email.split("@")[0]
+        username = base_username
+        # ensure uniqueness on username as well
+        idx = 1
+        while True:
+            res_u = await session.exec(select(User).where(User.username == username))
+            if not res_u.first():
+                break
+            idx += 1
+            username = f"{base_username}{idx}"
+        user = User(
+            username=username,
+            display_name=payload.display_name or username,
+            email=payload.email,
+            password_hash=hash_password(payload.password),
+            is_active=True,
+            created_at=_now_iso(),
+            updated_at=_now_iso(),
+            xp=0,
+        )
+        session.add(user)
+        await session.commit()
+
+    access, refresh = issue_token_pair(subject=username)
+    return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
+
+
+# PUBLIC_INTERFACE
+@router.post(
+    "/auth/login",
+    summary="Login",
+    description="Login with email/password and receive token pair.",
+    response_model=TokenPairResponse,
+)
+async def login(payload: LoginRequest):
+    """Authenticate using email/password."""
+    async with get_session() as session:
+        res = await session.exec(select(User).where(User.email == payload.email))
         user = res.first()
-        if not user:
-            # Create a simple user record
-            user = User(username=x_demo_user, display_name=x_demo_user, xp=0)
-            session.add(user)
-            await session.commit()
-    now = datetime.utcnow()
-    payload = {"sub": x_demo_user, "iat": int(now.timestamp()), "exp": int((now + timedelta(hours=1)).timestamp())}
-    token = jwt.encode(payload, settings.APP_SECRET, algorithm="HS256")
-    return {"access_token": token, "token_type": "bearer"}
+        if not user or not user.password_hash or not verify_password(payload.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        if getattr(user, "is_active", True) is False:
+            raise HTTPException(status_code=403, detail="User inactive")
+    access, refresh = issue_token_pair(subject=user.username)
+    return {"access_token": access, "refresh_token": refresh, "token_type": "bearer"}
+
+
+# PUBLIC_INTERFACE
+@router.post(
+    "/auth/refresh",
+    summary="Refresh access token",
+    description="Use refresh token to obtain a new access token.",
+    response_model=AccessTokenResponse,
+)
+async def refresh(payload: RefreshRequest):
+    """Exchange a valid refresh token for a new access token."""
+    try:
+        claims = decode_token(payload.refresh_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+    if claims.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Invalid token type")
+    subject = claims.get("sub")
+    if not subject:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    access, _ = issue_token_pair(subject=subject)
+    return {"access_token": access, "token_type": "bearer"}
+
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/auth/me",
+    summary="Current user",
+    description="Return profile of the authenticated user.",
+    response_model=MeResponse,
+)
+async def me(user: User = Depends(get_current_user)):
+    """Return current user info."""
+    return MeResponse(username=user.username, email=getattr(user, "email", None), display_name=user.display_name, xp=user.xp)
