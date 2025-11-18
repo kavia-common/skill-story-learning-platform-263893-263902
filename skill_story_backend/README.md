@@ -60,6 +60,31 @@ alembic upgrade head
 uvicorn src.api.main:app --host 0.0.0.0 --port 3001 --reload
 ```
 
+### Capturing Logs (startup, DB connectivity, schema, seeding)
+
+The service logs to stdout by default. To capture logs around restarts for diagnostics:
+
+```bash
+# From skill_story_backend/
+chmod +x utils/capture_backend_logs.sh
+
+# 1) Start the backend (in another terminal) as usual:
+uvicorn src.api.main:app --host 0.0.0.0 --port 3001 --reload
+
+# 2) Start the log capture helper (best-effort capture for successive restarts):
+./utils/capture_backend_logs.sh start 3001
+
+# 3) After a restart attempt, show recent logs:
+./utils/capture_backend_logs.sh show 400
+```
+
+Look for lines:
+- "Starting Skill Story LMS API" (settings snapshot)
+- "Creating async engine", "Database connection attempt failed; retrying", "Database connection established"
+- "Database schema ensured (create_all successful)"
+- "Deferring DB seeding to background task" or "Seeded demo user", "Focus Master seeding done", "Seeding completed"
+- Errors: "Schema creation failed", "Seeding failed", "Focus Master seeding failed"
+
 5. Visit:
 - Health: `GET http://localhost:3001/health`
 - Docs: `http://localhost:3001/docs`
