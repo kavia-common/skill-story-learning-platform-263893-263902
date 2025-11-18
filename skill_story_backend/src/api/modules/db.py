@@ -112,59 +112,17 @@ async def _connect_with_retries() -> None:
 
 
 async def _create_schema_safe() -> None:
-    """Create tables if not exist, with error handling and logs."""
+    """Create tables if not exist, with error handling and logs.
+
+    Note: Alembic manages schema in production. This create_all is kept as a safety net
+    for local dev environments that haven't applied migrations yet.
+    """
     if engine is None:
         return
     try:
         async with engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
         logger.info("Database schema ensured (create_all successful)")
-        # Minimal migration guards to add auth columns if they don't exist.
-        try:
-            async with engine.begin() as conn:
-                # Postgres safe-add pattern using information_schema
-                # email
-                await conn.exec_driver_sql(
-                    """
-                    DO $$
-                    BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name='user' AND column_name='email'
-                        ) THEN
-                            ALTER TABLE "user" ADD COLUMN email VARCHAR(255);
-                            CREATE UNIQUE INDEX IF NOT EXISTS ix_user_email ON "user"(email);
-                        END IF;
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name='user' AND column_name='password_hash'
-                        ) THEN
-                            ALTER TABLE "user" ADD COLUMN password_hash TEXT;
-                        END IF;
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name='user' AND column_name='is_active'
-                        ) THEN
-                            ALTER TABLE "user" ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
-                        END IF;
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name='user' AND column_name='created_at'
-                        ) THEN
-                            ALTER TABLE "user" ADD COLUMN created_at VARCHAR(64);
-                        END IF;
-                        IF NOT EXISTS (
-                            SELECT 1 FROM information_schema.columns
-                            WHERE table_name='user' AND column_name='updated_at'
-                        ) THEN
-                            ALTER TABLE "user" ADD COLUMN updated_at VARCHAR(64);
-                        END IF;
-                    END $$;
-                    """
-                )
-                logger.info("Auth columns ensured on user table (if missing)")
-        except Exception as e:
-            logger.warning("Auth column migration skipped/failed", extra={"error": str(e)})
     except Exception as e:
         logger.error("Schema creation failed", extra={"error": str(e)})
         # Avoid raising to not crash startup

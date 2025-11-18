@@ -42,7 +42,9 @@ uvloop==0.21.0
 watchfiles==1.0.5
 websockets==15.0.1
 sqlmodel==0.0.22
+SQLAlchemy==2.0.36
 asyncpg==0.30.0
+alembic==1.14.0
 PyJWT==2.10.1
 passlib==1.7.4
 bcrypt==4.2.1
