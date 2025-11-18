@@ -113,6 +113,18 @@ async def login(payload: LoginRequest):
 
 # PUBLIC_INTERFACE
 @router.post(
+    "/auth/token",
+    summary="Login (alias)",
+    description="Alias for /auth/login to maintain backward compatibility with older clients expecting /api/auth/token.",
+    response_model=TokenPairResponse,
+)
+async def login_alias(payload: LoginRequest):
+    """Alias endpoint that behaves like /auth/login for compatibility."""
+    return await login(payload)
+
+
+# PUBLIC_INTERFACE
+@router.post(
     "/auth/refresh",
     summary="Refresh access token",
     description="Use refresh token to obtain a new access token.",
